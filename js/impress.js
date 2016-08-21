@@ -885,6 +885,12 @@
         el.dispatchEvent(event);
     };
 
+    var makeDomElement = function ( html ) {
+        var tempDiv = document.createElement("div");
+        tempDiv.innerHTML = html;
+        return tempDiv.firstChild;
+    };
+
     var toggleStatus = function() {
         if (currentStepTimeout>0 && status!="paused") {
             status="paused";
@@ -918,27 +924,24 @@
 
     var addToolbarButton = function (toolbar) {
         var html = '<button id="impress-autoplay-playpause" title="Autoplay" class="impress-autoplay">' + getButtonText() + '</button>';
-
-        toolbar.addEventListener("impress:toolbar:added:autoplay", function(e){
-            toolbarButton = document.getElementById("impress-autoplay-playpause");
-            toolbarButton.addEventListener( "click", function( event ) {
-                toggleStatus();
-                if (status=="playing") {
-                    if (autoplayDefault == 0) {
-                        autoplayDefault = 7;
-                    }
-                    if ( currentStepTimeout == 0 ) {
-                        currentStepTimeout = autoplayDefault;
-                    }
-                    setAutoplayTimeout(currentStepTimeout);
+        toolbarButton = makeDomElement( html );
+        toolbarButton.addEventListener( "click", function( event ) {
+            toggleStatus();
+            if (status=="playing") {
+                if (autoplayDefault == 0) {
+                    autoplayDefault = 7;
                 }
-                else if (status=="paused") {
-                    setAutoplayTimeout(0);
+                if ( currentStepTimeout == 0 ) {
+                    currentStepTimeout = autoplayDefault;
                 }
-            });
+                setAutoplayTimeout(currentStepTimeout);
+            }
+            else if (status=="paused") {
+                setAutoplayTimeout(0);
+            }
         });
 
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 10, html : html, callback : "autoplay" } );
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 10, element : toolbarButton } );
     };
 
 })(document, window);
@@ -1076,6 +1079,15 @@
  */
 (function ( document, window ) {
     'use strict';
+
+    var triggerEvent = function (el, eventName, detail) {
+        var event = document.createEvent("CustomEvent");
+        event.initCustomEvent(eventName, true, true, detail);
+        el.dispatchEvent(event);
+    };
+
+
+
     var preInit = function() {
         if( window.markdown ){
             // particular. We do it ourselves here. In addition, we use "-----" as a delimiter for new slide.
@@ -1127,6 +1139,10 @@
             else{
                 impressConsole().init();
             }
+            
+            // Add 'P' to the help popup
+            triggerEvent(document, "impress:help:add", { command : "P", text : "Presenter console", row : 10} );
+
             // Legacy impressConsole attribute (that breaks our namespace
             // convention) to open the console at start of presentation.
             // TODO: This kind of thing would in any case be better placed
@@ -1273,59 +1289,108 @@
 
 
 /**
- * Mouse timeout plugin
+ * Help popup plugin
  *
- * After 3 seconds of mouse inactivity, add the css class 
- * `body.impress-mouse-timeout`. On `mousemove`, `click` or `touch`, remove the
- * class.
+ * Example:
+ * 
+ *     <!-- Show a help popup at start, or if user presses 'H' -->
+ *     <div id="impress-help"></div>
  *
- * The use case for this plugin is to use CSS to hide elements from the screen
- * and only make them visible when the mouse is moved. Examples where this
- * might be used are: the toolbar from the toolbar plugin, and the mouse cursor
- * itself.
+ * For developers:
  *
- * Example CSS:
- *
- *     body.impress-mouse-timeout {
- *         cursor: none;
- *     }
- *     body.impress-mouse-timeout div#impress-toolbar {
- *         display: none;
- *     }
- *
+ * Typical use for this plugin, is for plugins that support some keypress, to add a line
+ * to the help popup produced by this plugin. For example "P: Presenter console".
  *
  * Copyright 2016 Henrik Ingo (@henrikingo)
  * Released under the MIT license.
  */
 (function ( document, window ) {
     'use strict';
-    var timeout = 3;
+    var rows = [];
     var timeoutHandle;
 
-    var hide = function(){
-        // Mouse is now inactive
-        document.body.classList.add("impress-mouse-timeout");
+    var triggerEvent = function (el, eventName, detail) {
+        var event = document.createEvent("CustomEvent");
+        event.initCustomEvent(eventName, true, true, detail);
+        el.dispatchEvent(event);
     };
 
-    var show = function(){
-        if ( timeoutHandle ) {
-            clearTimeout(timeoutHandle);
+    var renderHelpDiv = function( e ){
+        var helpDiv = document.getElementById("impress-help");
+        if(helpDiv){
+            var html = [];
+            for( var row in rows ){
+                for( var arrayItem in row ){
+                    html.push(rows[row][arrayItem]);
+                }
+            }
+            if( html ) {
+                helpDiv.innerHTML = "<table>\n" + html.join("\n") + "</table>\n";
+            }
         }
-        // Mouse is now active
-        document.body.classList.remove("impress-mouse-timeout");
-        // Then set new timeout after which it is considered inactive again
-        timeoutHandle = setTimeout( hide, timeout*1000 );
+    };
+    
+    var toggleHelp = function() {
+        var helpDiv = document.getElementById("impress-help");
+        if(helpDiv.style.display == 'block') {
+            helpDiv.style.display = 'none';
+        }
+        else {
+            helpDiv.style.display = 'block';
+            clearTimeout( timeoutHandle );
+        }
     };
 
-    document.addEventListener("impress:init", function (event) {
-        document.addEventListener("mousemove", show);
-        document.addEventListener("click", show);
-        document.addEventListener("touch", show);
-        // Set first timeout
-        show();
+    document.addEventListener("keyup", function ( event ) {
+        // Check that event target is html or body element.
+        if ( event.target.nodeName == "BODY" || event.target.nodeName == "HTML" ) {
+            if ( event.keyCode == 72 ) { // 'h'
+                event.preventDefault();
+                toggleHelp();
+            }
+        }
     }, false);
 
+    // API
+    // Other plugins can add help texts, typically if they support an action on a keypress.
+    /**
+     * Add a help text to the help popup.
+     *
+     * :param: e.detail.command  Example: "H"
+     * :param: e.detail.text     Example: "Show this help."
+     * :param: e.detail.row      Row index from 0 to 9 where to place this help text. Example: 0
+     */
+    document.addEventListener("impress:help:add", function( e ){
+        // The idea is for the sender of the event to supply a unique row index, used for sorting.
+        // But just in case two plugins would ever use the same row index, we wrap each row into
+        // its own array. If there are more than one entry for the same index, they are shown in
+        // first come, first serve ordering.
+        var rowIndex = e.detail.row;
+        if ( typeof rows[rowIndex] != 'object' || !rows[rowIndex].isArray ) {
+            rows[rowIndex] = [];
+        }
+        rows[e.detail.row].push( "<tr><td><strong>" + e.detail.command + "</strong></td><td>" + e.detail.text + "</td></tr>" );
+        renderHelpDiv();
+    });
+
+    document.addEventListener("impress:init", function( e ){
+        renderHelpDiv();
+        // At start, show the help for 7 seconds.
+        var helpDiv = document.getElementById("impress-help");
+        if( helpDiv ) {
+            helpDiv.style.display = "block";
+            timeoutHandle = setTimeout(function () {
+                var helpDiv = window.document.getElementById("impress-help");
+                helpDiv.style.display = "none";
+            }, 7000);
+        }
+    });
+    
+    // Use our own API to register the help text for 'h'
+    triggerEvent(document, "impress:help:add", { command : "H", text : "Show this help", row : 0} );
+    
 })(document, window);
+
 
 /**
  * Mobile devices support
@@ -1396,6 +1461,61 @@
 
 
 /**
+ * Mouse timeout plugin
+ *
+ * After 3 seconds of mouse inactivity, add the css class 
+ * `body.impress-mouse-timeout`. On `mousemove`, `click` or `touch`, remove the
+ * class.
+ *
+ * The use case for this plugin is to use CSS to hide elements from the screen
+ * and only make them visible when the mouse is moved. Examples where this
+ * might be used are: the toolbar from the toolbar plugin, and the mouse cursor
+ * itself.
+ *
+ * Example CSS:
+ *
+ *     body.impress-mouse-timeout {
+ *         cursor: none;
+ *     }
+ *     body.impress-mouse-timeout div#impress-toolbar {
+ *         display: none;
+ *     }
+ *
+ *
+ * Copyright 2016 Henrik Ingo (@henrikingo)
+ * Released under the MIT license.
+ */
+(function ( document, window ) {
+    'use strict';
+    var timeout = 3;
+    var timeoutHandle;
+
+    var hide = function(){
+        // Mouse is now inactive
+        document.body.classList.add("impress-mouse-timeout");
+    };
+
+    var show = function(){
+        if ( timeoutHandle ) {
+            clearTimeout(timeoutHandle);
+        }
+        // Mouse is now active
+        document.body.classList.remove("impress-mouse-timeout");
+        // Then set new timeout after which it is considered inactive again
+        timeoutHandle = setTimeout( hide, timeout*1000 );
+    };
+
+    document.addEventListener("impress:init", function (event) {
+        document.addEventListener("mousemove", show);
+        document.addEventListener("click", show);
+        document.addEventListener("touch", show);
+        // Set first timeout
+        show();
+    }, false);
+
+})(document, window);
+
+/**
  * Navigation events plugin
  *
  * As you can see this part is separate from the impress.js core code.
@@ -1421,19 +1541,12 @@
 (function ( document, window ) {
     'use strict';
     
-    // throttling function calls, by Remy Sharp
-    // http://remysharp.com/2010/07/21/throttling-function-calls/
-    var throttle = function (fn, delay) {
-        var timer = null;
-        return function () {
-            var context = this, args = arguments;
-            clearTimeout(timer);
-            timer = setTimeout(function () {
-                fn.apply(context, args);
-            }, delay);
-        };
+    var triggerEvent = function (el, eventName, detail) {
+        var event = document.createEvent("CustomEvent");
+        event.initCustomEvent(eventName, true, true, detail);
+        el.dispatchEvent(event);
     };
-    
+
     // wait for impress.js to be initialized
     document.addEventListener("impress:init", function (event) {
         // Getting API from event data.
@@ -1563,15 +1676,8 @@
             }
         }, false);
         
-        // TODO: This was originally defined here, when impress.js was a single file.
-        // It has nothing to do with key navigation events, but it depends on the 
-        // throttle function defined above. Leaving here for now.
-        
-        // rescale presentation when window is resized
-        window.addEventListener("resize", throttle(function () {
-            // force going to active step again, to trigger rescaling
-            api.goto( document.querySelector(".step.active"), 500 );
-        }, 250), false);
+        // Add a line to the help popup
+        triggerEvent(document, "impress:help:add", { command : "Left &amp; Right", text : "Previous &amp; Next step", row : 1} );
         
     }, false);
         
@@ -1584,18 +1690,8 @@
  * This plugin provides UI elements "back", "forward" and a list to select
  * a specific slide number.
  *
- * This plugin is what we call a _UI plugin_. It's actually an init plugin, but
- * exposes visible UI elements. All UI plugins available in the default
- * set, must be invisible by default. To add these controls, add the following
- * empty div to your html:
- *
- *     <div id="impress-navigation-ui" style="position: fixed;"></div>
- *
- * (The style attribute is optional, but it's my preferred way of of preventing
- * mouse clicks from propagating through the UI elements into the slides, that
- * may be behind the elements we create here. Since clicking on a slide causes
- * impress.js to navigate to that slide, this will be in conflict with the
- * intended behavior of these controls.)
+ * The navigation controls are added to the toolbar plugin via DOM events. User must enable the
+ * toolbar in a presentation to have them visible.
  *
  * Copyright 2016 Henrik Ingo (@henrikingo)
  * Released under the MIT license.
@@ -1609,14 +1705,17 @@
     var prev;
     var select;
     var next;
-    var timeoutHandle;
-    // How many seconds shall UI controls be visible after a touch or mousemove
-    var timeout = 3;
 
     var triggerEvent = function (el, eventName, detail) {
         var event = document.createEvent("CustomEvent");
         event.initCustomEvent(eventName, true, true, detail);
         el.dispatchEvent(event);
+    };
+
+    var makeDomElement = function ( html ) {
+        var tempDiv = document.createElement("div");
+        tempDiv.innerHTML = html;
+        return tempDiv.firstChild;
     };
 
     var addNavigationControls = function( event ) {
@@ -1635,34 +1734,28 @@
                            + '</select>';
         var nextHtml   = '<button id="impress-navigation-ui-next" title="Next" class="impress-navigation-ui">&gt;</button>';
 
-        toolbar.addEventListener("impress:toolbar:added:navigation-ui:prev", function(e){
-            prev = document.getElementById("impress-navigation-ui-prev");
-            prev.addEventListener( "click",
-                function( event ) {
-                    api.prev();
-            });
+        var prevElement = makeDomElement( prevHtml );
+        prevElement.addEventListener( "click",
+            function( event ) {
+                api.prev();
         });
-        toolbar.addEventListener("impress:toolbar:added:navigation-ui:select", function(e){
-            select = document.getElementById("impress-navigation-ui-select");
-            select.addEventListener( "change",
-                function( event ) {
-                    api.goto( event.target.value );
-            });
-            root.addEventListener("impress:stepenter", function(event){
-                select.value = event.target.id;
-            });
+        var selectElement = makeDomElement( selectHtml );
+        selectElement.addEventListener( "change",
+            function( event ) {
+                api.goto( event.target.value );
         });
-        toolbar.addEventListener("impress:toolbar:added:navigation-ui:next", function(e){
-            next = document.getElementById("impress-navigation-ui-next");
-            next.addEventListener( "click",
-                function() {
-                    api.next();
-            });
+        root.addEventListener("impress:stepenter", function(event){
+            selectElement.value = event.target.id;
         });
-
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, html : prevHtml, callback : "navigation-ui:prev" } );
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, html : selectHtml, callback : "navigation-ui:select" } );
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, html : nextHtml, callback : "navigation-ui:next" } );
+        var nextElement = makeDomElement( nextHtml );
+        nextElement.addEventListener( "click",
+            function() {
+                api.next();
+        });
+        
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, element : prevElement } );
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, element : selectElement } );
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, element : nextElement } );
     };
     
     // wait for impress.js to be initialized
@@ -1838,6 +1931,49 @@
     // Register the plugin to be called in pre-init phase
     impress().addPreInitPlugin( rel );
     
+})(document, window);
+
+
+/**
+ * Resize plugin
+ *
+ * Rescale the presentation after a window resize.
+ *
+ * Copyright 2011-2012 Bartek Szopka (@bartaz)
+ * Released under the MIT license.
+ * ------------------------------------------------
+ *  author:  Bartek Szopka
+ *  version: 0.5.3
+ *  url:     http://bartaz.github.com/impress.js/
+ *  source:  http://github.com/bartaz/impress.js/
+ *
+ */
+(function ( document, window ) {
+    'use strict';
+    
+    // throttling function calls, by Remy Sharp
+    // http://remysharp.com/2010/07/21/throttling-function-calls/
+    var throttle = function (fn, delay) {
+        var timer = null;
+        return function () {
+            var context = this, args = arguments;
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                fn.apply(context, args);
+            }, delay);
+        };
+    };
+    
+    // wait for impress.js to be initialized
+    document.addEventListener("impress:init", function (event) {
+        var api = event.detail.api;
+        // rescale presentation when window is resized
+        window.addEventListener("resize", throttle(function () {
+            // force going to active step again, to trigger rescaling
+            api.goto( document.querySelector(".step.active"), 500 );
+        }, 250), false);
+    }, false);
+        
 })(document, window);
 
 
@@ -2095,7 +2231,7 @@
         if(!groups[index]){
             groups[index] = document.createElement("span");
             groups[index].id = id;
-            var nextIndex = getNextIndex(index);
+            var nextIndex = getNextGroupIndex(index);
             if ( nextIndex === undefined ){
                 toolbar.appendChild(groups[index]);
             }
@@ -2107,7 +2243,7 @@
     };
     
     /**
-     * Get the node from groups[] that is immediately after given index.
+     * Get the span element from groups[] that is immediately after given index.
      *
      * This can be used to find the reference node for an insertBefore() call.
      * If no element exists at a larger index, returns undefined. (In this case,
@@ -2115,7 +2251,7 @@
      *
      * Note that index needn't itself exist in groups[].
      */
-    var getNextIndex = function(index){
+    var getNextGroupIndex = function(index){
         var i = index+1;
         while( ! groups[i] && i < groups.length) {
             i++;
@@ -2127,40 +2263,27 @@
 
     // API
     // Other plugins can add and remove buttons by sending them as events.
-    // In return, toolbar plugin will trigger events when button is pressed.
+    // In return, toolbar plugin will trigger events when button was added.
     if (toolbar) {
         /**
          * Append a widget inside toolbar span element identified by given group index.
          *
          * :param: e.detail.group    integer specifying the span element where widget will be placed
-         * :param: e.detail.html     html code that is the widget to show in the toolbar
-         * :param: e.detail.callback a string used in the event triggered when new widget is added
+         * :param: e.detail.element  a dom element to add to the toolbar
          */
         toolbar.addEventListener("impress:toolbar:appendChild", function( e ){
             var group = getGroupElement(e.detail.group);
-            var tempDiv = document.createElement("div");
-            tempDiv.innerHTML = e.detail.html;
-            var widget = tempDiv.firstChild;
-            group.appendChild(widget);
-
-            // Once the new widget is added, send a callback event so that the caller plugin
-            // can, for example, add its event listeners to the new button.
-            var callbackEvent = "impress:toolbar:added:" + e.detail.callback;
-            triggerEvent(toolbar, callbackEvent, toolbar );
-            triggerEvent(toolbar, "impress:toolbar:added", toolbar );
+            group.appendChild(e.detail.element);
         });
 
+        /**
+         * Add a widget to toolbar using insertBefore() DOM method.
+         *
+         * :param: e.detail.before   the reference dom element, before which new element is added
+         * :param: e.detail.element  a dom element to add to the toolbar
+         */
         toolbar.addEventListener("impress:toolbar:insertBefore", function( e ){
-            var tempDiv = document.createElement("div");
-            tempDiv.innerHTML = e.detail.html;
-            var widget = tempDiv.firstChild;
-            toolbar.insertBefore(widget, e.detail.before);
-
-            // Once the new widget is added, send a callback event so that the caller plugin
-            // can, for example, add its event listeners to the new button.
-            var callbackEvent = "impress:toolbar:added:" + e.detail.callback;
-            triggerEvent(toolbar, callbackEvent, toolbar );
-            triggerEvent(toolbar, "impress:toolbar:added", toolbar );
+            toolbar.insertBefore(e.detail.element, e.detail.before);
         });
 
         /**
@@ -2168,7 +2291,6 @@
          */
         toolbar.addEventListener("impress:toolbar:removeWidget", function( e ){
             toolbar.removeChild(e.detail.remove);
-            triggerEvent(toolbar, "impress:toolbar:removed", toolbar );
         });
     } // if toolbar
 

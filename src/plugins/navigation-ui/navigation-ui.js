@@ -4,18 +4,8 @@
  * This plugin provides UI elements "back", "forward" and a list to select
  * a specific slide number.
  *
- * This plugin is what we call a _UI plugin_. It's actually an init plugin, but
- * exposes visible UI elements. All UI plugins available in the default
- * set, must be invisible by default. To add these controls, add the following
- * empty div to your html:
- *
- *     <div id="impress-navigation-ui" style="position: fixed;"></div>
- *
- * (The style attribute is optional, but it's my preferred way of of preventing
- * mouse clicks from propagating through the UI elements into the slides, that
- * may be behind the elements we create here. Since clicking on a slide causes
- * impress.js to navigate to that slide, this will be in conflict with the
- * intended behavior of these controls.)
+ * The navigation controls are added to the toolbar plugin via DOM events. User must enable the
+ * toolbar in a presentation to have them visible.
  *
  * Copyright 2016 Henrik Ingo (@henrikingo)
  * Released under the MIT license.
@@ -29,14 +19,17 @@
     var prev;
     var select;
     var next;
-    var timeoutHandle;
-    // How many seconds shall UI controls be visible after a touch or mousemove
-    var timeout = 3;
 
     var triggerEvent = function (el, eventName, detail) {
         var event = document.createEvent("CustomEvent");
         event.initCustomEvent(eventName, true, true, detail);
         el.dispatchEvent(event);
+    };
+
+    var makeDomElement = function ( html ) {
+        var tempDiv = document.createElement("div");
+        tempDiv.innerHTML = html;
+        return tempDiv.firstChild;
     };
 
     var addNavigationControls = function( event ) {
@@ -55,34 +48,28 @@
                            + '</select>';
         var nextHtml   = '<button id="impress-navigation-ui-next" title="Next" class="impress-navigation-ui">&gt;</button>';
 
-        toolbar.addEventListener("impress:toolbar:added:navigation-ui:prev", function(e){
-            prev = document.getElementById("impress-navigation-ui-prev");
-            prev.addEventListener( "click",
-                function( event ) {
-                    api.prev();
-            });
+        var prevElement = makeDomElement( prevHtml );
+        prevElement.addEventListener( "click",
+            function( event ) {
+                api.prev();
         });
-        toolbar.addEventListener("impress:toolbar:added:navigation-ui:select", function(e){
-            select = document.getElementById("impress-navigation-ui-select");
-            select.addEventListener( "change",
-                function( event ) {
-                    api.goto( event.target.value );
-            });
-            root.addEventListener("impress:stepenter", function(event){
-                select.value = event.target.id;
-            });
+        var selectElement = makeDomElement( selectHtml );
+        selectElement.addEventListener( "change",
+            function( event ) {
+                api.goto( event.target.value );
         });
-        toolbar.addEventListener("impress:toolbar:added:navigation-ui:next", function(e){
-            next = document.getElementById("impress-navigation-ui-next");
-            next.addEventListener( "click",
-                function() {
-                    api.next();
-            });
+        root.addEventListener("impress:stepenter", function(event){
+            selectElement.value = event.target.id;
         });
-
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, html : prevHtml, callback : "navigation-ui:prev" } );
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, html : selectHtml, callback : "navigation-ui:select" } );
-        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, html : nextHtml, callback : "navigation-ui:next" } );
+        var nextElement = makeDomElement( nextHtml );
+        nextElement.addEventListener( "click",
+            function() {
+                api.next();
+        });
+        
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, element : prevElement } );
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, element : selectElement } );
+        triggerEvent(toolbar, "impress:toolbar:appendChild", { group : 0, element : nextElement } );
     };
     
     // wait for impress.js to be initialized
